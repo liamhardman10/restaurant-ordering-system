@@ -19,8 +19,10 @@ Final Project for Software Engineering 2. (not original project idea)
 - `tests/` - Unit tests
 
 ## Installation Instructions
-- All you need to do is clone the repo: `git clone <repo-url>`
-- Build in Visual Studio
+- Check the latest release
+- Download Restaurant Ordering Kiosk.zip file
+- Extract zip contents to folder
+- Run .exe file locally!
 
 ## API Usage Details
 - `IOrderService`: Manage orders
