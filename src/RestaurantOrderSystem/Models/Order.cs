@@ -9,6 +9,9 @@ public class Order
     public decimal Tax { get; set; }
     public decimal Total { get; set; }
 
+    // New compatibility field used by AddComboToOrder in OrderService
+    public decimal ComboDiscounts { get; set; }
+
     public Order()
     {
         Items = new List<MenuItem>();

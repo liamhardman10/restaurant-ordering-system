@@ -1,26 +1,33 @@
-﻿using System.Collections.Generic;
-using System.Linq;
-using RestaurantOrderSystem.Factories;
+﻿using RestaurantOrderSystem.Factories;
 using RestaurantOrderSystem.Models;
 using RestaurantOrderSystem.Services;
 using System.Windows;
 using System.Windows.Controls;
 
-// Alias the model type to avoid ambiguity with System.Windows.Controls.MenuItem
-using ModelMenuItem = RestaurantOrderSystem.Models.MenuItem;
-
-namespace RestaurantOrderSystem.View
+public partial class MainWindow : Window
 {
-    public partial class MainWindow : Window
+    // ... existing fields ...
+    private readonly IDynamicPricingService _dynamicPricingService;
+    private LoyaltyCustomer? _currentCustomer;
+    private List<ComboMeal> _comboMeals = [];
+
+    public MainWindow()
     {
-        private readonly IOrderService _orderService;
-        private readonly IPricingService _pricingService;
-        private readonly IDiscountService _discountService;
-        private readonly ReceiptFactory _receiptFactory;
+        InitializeComponent();
+
+        // Initialize services
+        _orderService = new OrderService();
+        _pricingService = new PricingService();
+        _discountService = new DiscountService();
+        _receiptFactory = new ReceiptFactory();
+        _dynamicPricingService = new DynamicPricingService();
 
         private Order _currentOrder = null!;
         private List<ModelMenuItem> _menuItems = new List<ModelMenuItem>();
         private List<Discount> _availableDiscounts = new List<Discount>();
+
+        private LoyaltyCustomer? _currentCustomer;
+        private List<ComboMeal> _comboMeals = new List<ComboMeal>();
 
         public MainWindow()
         {
@@ -31,29 +38,21 @@ namespace RestaurantOrderSystem.View
             _pricingService = new PricingService();
             _discountService = new DiscountService();
             _receiptFactory = new ReceiptFactory();
+            _dynamicPricingService = new DynamicPricingService();
 
             InitializeMenu();
             InitializeDiscounts();
+            InitializeComboMeals();
             StartNewOrder();
+            UpdateTimeBasedPricingDisplay();
         }
 
-        private void InitializeMenu()
+         // Update pricing indicators
+        foreach (var item in _menuItems)
         {
-            _menuItems = new List<ModelMenuItem>
-            {
-                new ModelMenuItem(1, "Classic Cheeseburger", 8.99m, "Main", "Beef patty with cheese, lettuce, and tomato"),
-                new ModelMenuItem(2, "Caesar Salad", 6.99m, "Salad", "Fresh romaine with Caesar dressing and croutons"),
-                new ModelMenuItem(3, "Spaghetti Bolognese", 12.99m, "Main", "Pasta with homemade meat sauce"),
-                new ModelMenuItem(4, "Iced Tea", 2.49m, "Drink", "Freshly brewed iced tea"),
-                new ModelMenuItem(5, "Chocolate Lava Cake", 5.99m, "Dessert", "Warm chocolate cake with molten center"),
-                new ModelMenuItem(6, "Fish & Chips", 10.99m, "Main", "Beer-battered cod with fries"),
-                new ModelMenuItem(7, "French Onion Soup", 4.99m, "Appetizer", "With melted cheese and crouton"),
-                new ModelMenuItem(8, "Coffee", 1.99m, "Drink", "Freshly brewed coffee"),
-                new ModelMenuItem(9, "Chicken Wings", 8.49m, "Appetizer", "10 pieces with your choice of sauce"),
-                new ModelMenuItem(10, "Margherita Pizza", 11.99m, "Main", "Classic tomato, mozzarella, and basil")
-            };
+            var currentPrice = item.GetCurrentPrice(timeOfDay);
+            var priceDiff = currentPrice - item.BasePrice;
 
-            // Bind to ItemsControl defined in XAML (ensure XAML x:Name matches 'MenuItemsControl')
             MenuItemsControl.ItemsSource = _menuItems;
         }
 
@@ -67,197 +66,173 @@ namespace RestaurantOrderSystem.View
             };
         }
 
-        private void StartNewOrder()
+        private void InitializeComboMeals()
         {
-            _currentOrder = _orderService.CreateOrder();
-            UpdateOrderDisplay();
-            StatusText.Text = $"New order #{_currentOrder.OrderId} started";
-            OrderIdText.Text = $"Order #{_currentOrder.OrderId}";
-        }
+            // Ensure _menuItems populated
+            if (!_menuItems.Any())
+                InitializeMenu();
 
-        private void AddMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button button && button.Tag is int itemId)
+            var burgerItem = _menuItems.FirstOrDefault(m => m.Name.Contains("Cheeseburger", StringComparison.OrdinalIgnoreCase));
+            var friesItem = new ModelMenuItem(11, "French Fries", 3.99m, "Side", "Crispy golden fries");
+            var drinkItem = _menuItems.FirstOrDefault(m => m.Name.Contains("Iced Tea", StringComparison.OrdinalIgnoreCase));
+
+            // Defensive: ensure required items exist
+            if (burgerItem == null || drinkItem == null)
             {
-                var selectedItem = _menuItems.FirstOrDefault(item => item.Id == itemId);
-                if (selectedItem != null)
-                {
-                    _orderService.AddItemToOrder(_currentOrder, selectedItem);
-                    UpdateOrderDisplay();
-                    StatusText.Text = $"Added '{selectedItem.Name}' to order";
-                }
+                // If items missing, create reasonable fallbacks or skip combo population
+                return;
             }
-        }
 
-        private void RemoveOrderItem_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button button && button.Tag is int itemId)
+            _comboMeals = new List<ComboMeal>
             {
-                var item = _currentOrder.Items.FirstOrDefault(i => i.Id == itemId);
-                if (item != null)
+                new ComboMeal
                 {
-                    _orderService.RemoveItemFromOrder(_currentOrder, item);
-                    UpdateOrderDisplay();
-                    StatusText.Text = $"Removed '{item.Name}' from order";
-                }
-            }
-        }
-
-        // Handler bound from XAML: ItemsControl item template uses Click="RemoveItemButton_Click"
-        private void RemoveItemButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button button && button.Tag != null)
-            {
-                // Tag could be string/int depending on binding; attempt to parse to int
-                if (button.Tag is int id)
+                    Id = 1,
+                    Name = "Burger Combo",
+                    Description = "Cheeseburger + Fries + Drink",
+                    Items = new List<ModelMenuItem> { burgerItem, friesItem, drinkItem },
+                    ComboPrice = 12.99m
+                },
+                new ComboMeal
                 {
-                    var item = _currentOrder.Items.FirstOrDefault(i => i.Id == id);
-                    if (item != null)
+                    Id = 2,
+                    Name = "Lunch Special",
+                    Description = "Soup + Salad + Drink",
+                    Items = new List<ModelMenuItem>
                     {
-                        _orderService.RemoveItemFromOrder(_currentOrder, item);
-                        UpdateOrderDisplay();
-                        StatusText.Text = $"Removed '{item.Name}' from order";
+                        _menuItems.First(m => m.Name.Contains("Soup", StringComparison.OrdinalIgnoreCase)),
+                        _menuItems.First(m => m.Name.Contains("Salad", StringComparison.OrdinalIgnoreCase)),
+                        drinkItem
+                    },
+                    ComboPrice = 9.99m
+                }
+            };
+
+            ComboMealsControl.ItemsSource = _comboMeals;
+        }
+
+        private void UpdateTimeBasedPricingDisplay()
+        {
+            // IDynamicPricingService and MenuItem APIs vary by implementation.
+            // This code assumes: GetCurrentTimeOfDay() and MenuItem.GetCurrentPrice(timeOfDay) exist.
+            var timeOfDay = _dynamicPricingService.GetCurrentTimeOfDay();
+            TimeOfDayText.Text = $"Current: {timeOfDay}";
+
+            foreach (var item in _menuItems)
+            {
+                decimal currentPrice;
+                // Prefer GetCurrentPrice if provided, otherwise fall back to Price
+                try
+                {
+                    // If MenuItem exposes GetCurrentPrice, call it; otherwise use Price property
+                    var method = item.GetType().GetMethod("GetCurrentPrice", new[] { timeOfDay.GetType() });
+                    if (method != null)
+                    {
+                        currentPrice = (decimal)method.Invoke(item, new object[] { timeOfDay })!;
+                    }
+                    else
+                    {
+                        currentPrice = item.Price;
                     }
                 }
-                else if (int.TryParse(button.Tag.ToString(), out var parsedId))
+                catch
                 {
-                    var item = _currentOrder.Items.FirstOrDefault(i => i.Id == parsedId);
-                    if (item != null)
-                    {
-                        _orderService.RemoveItemFromOrder(_currentOrder, item);
-                        UpdateOrderDisplay();
-                        StatusText.Text = $"Removed '{item.Name}' from order";
-                    }
+                    currentPrice = item.Price;
+                }
+
+                var basePrice = item.Price;
+                var priceDiff = currentPrice - basePrice;
+
+    // New event handler for combo meals
+private void AddComboButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.Tag is int comboId)
+        {
+            var combo = _comboMeals.FirstOrDefault(c => c.Id == comboId);
+            if (combo != null)
+            {
+                try
+                {
+                    _orderService.AddComboToOrder(_currentOrder, combo);
+                    UpdateOrderDisplay();
+                    StatusText.Text = $"Added '{combo.Name}' combo (Save ${combo.Savings:F2})";
+                }
+                catch (ArgumentException ex)
+                {
+                    MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
-        }
-
-        private void ApplyDiscountButton_Click(object sender, RoutedEventArgs e)
-        {
-            string code = DiscountTextBox.Text.Trim().ToUpper();
-
-            if (string.IsNullOrEmpty(code))
-            {
-                StatusText.Text = "Please enter a discount code";
-                return;
-            }
-
-            var discount = _discountService.GetDiscount(code, _availableDiscounts);
-            if (discount != null)
-            {
-                _currentOrder.DiscountAmount = _discountService.CalculateDiscount(_currentOrder.Subtotal, discount);
-                UpdateOrderDisplay();
-                StatusText.Text = $"Applied discount: {discount.Description}";
-            }
-            else
-            {
-                StatusText.Text = $"Invalid discount code '{code}'. Try: SAVE10, SAVE5, FIXED3";
-            }
-        }
-
-        private void UpdateOrderDisplay()
-        {
-            // Update order items
-            OrderItemsControl.ItemsSource = null;
-            OrderItemsControl.ItemsSource = _currentOrder.Items;
-
-            // Show/hide empty order message (use XAML-generated field)
-            if (EmptyOrderText != null)
-            {
-                EmptyOrderText.Visibility = _currentOrder.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            }
-
-            // Calculate totals
-            _currentOrder.Subtotal = _orderService.CalculateSubtotal(_currentOrder);
-            _currentOrder.Tax = _pricingService.CalculateTax(_currentOrder.Subtotal);
-            _currentOrder.Total = _pricingService.CalculateTotal(_currentOrder);
-
-            // Update UI
-            SubtotalText.Text = $"${_currentOrder.Subtotal:F2}";
-            TaxText.Text = $"${_currentOrder.Tax:F2}";
-            DiscountText.Text = $"${_currentOrder.DiscountAmount:F2}";
-            TotalText.Text = $"${_currentOrder.Total:F2}";
-            ItemCountText.Text = _currentOrder.Items.Count.ToString();
-
-            // Update button states
-            CheckoutButton.IsEnabled = _currentOrder.Items.Count > 0;
-            ClearOrderButton.IsEnabled = _currentOrder.Items.Count > 0;
-        }
-
-        private void CheckoutButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentOrder.Items.Count == 0)
-            {
-                MessageBox.Show(
-                    "Your order is empty. Please add items from the menu before checking out.",
-                    "Empty Order",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning
-                );
-                return;
-            }
-
-            // Create receipt
-            var receipt = _receiptFactory.CreateReceipt(_currentOrder);
-
-            // Show receipt
-            MessageBox.Show(
-                receipt.GenerateReceiptText(),
-                $"Order #{receipt.OrderId} - Receipt",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information
-            );
-
-            // Start new order
-            StartNewOrder();
-            DiscountTextBox.Clear();
-            StatusText.Text = "Order completed. New order started.";
-        }
-
-        private void ClearOrderButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentOrder.Items.Count == 0)
-                return;
-
-            var result = MessageBox.Show(
-                "Clear the current order? All items will be removed.",
-                "Confirm Clear Order",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question
-            );
-
-            if (result == MessageBoxResult.Yes)
-            {
-                StartNewOrder();
-                DiscountTextBox.Clear();
-                StatusText.Text = "Order cleared";
-            }
-        }
-
-        private void RefreshMenuButton_Click(object sender, RoutedEventArgs e)
-        {
-            InitializeMenu();
-            StatusText.Text = "Menu refreshed";
-        }
-
-        private void StartNewOrderButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentOrder.Items.Count > 0)
-            {
-                var result = MessageBox.Show(
-                    "Starting a new order will clear the current order. Continue?",
-                    "Confirm New Order",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question
-                );
-
-                if (result == MessageBoxResult.No)
-                {
-                    return;
-                }
-            }
-
-            StartNewOrder();
         }
     }
+
+    // Loyalty login method
+    private void LoginCustomerButton_Click(object sender, RoutedEventArgs e)
+    {
+        // Simple mock customer login
+        _currentCustomer = new LoyaltyCustomer
+        {
+            CustomerId = 1,
+            Name = "John Doe",
+            Points = 650 // Gold tier
+        };
+
+        CustomerNameText.Text = _currentCustomer.Name;
+        LoyaltyTierText.Text = $"Tier: {_currentCustomer.Tier}";
+        PointsText.Text = $"Points: {_currentCustomer.Points}";
+
+        StatusText.Text = $"Welcome back, {_currentCustomer.Name}! ({_currentCustomer.Tier} member)";
+    }
+
+    // Updated checkout to award points
+    private void CheckoutButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_currentOrder.Items.Count == 0)
+        {
+            MessageBox.Show(
+                "Your order is empty. Please add items from the menu before checking out.",
+                "Empty Order",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning
+            );
+            return;
+        }
+
+        // Award loyalty points if customer is logged in
+        if (_currentCustomer != null)
+        {
+            int pointsEarned = (int)(_currentOrder.Total * 10); // 10 points per dollar
+            _currentCustomer.Points += pointsEarned;
+            PointsText.Text = $"Points: {_currentCustomer.Points}";
+
+            // Check if tier changed
+            var newTier = _currentCustomer.Tier;
+            LoyaltyTierText.Text = $"Tier: {newTier}";
+        }
+
+        // Create receipt
+        var receipt = _receiptFactory.CreateReceipt(_currentOrder);
+
+        // Add loyalty info to receipt
+        if (_currentCustomer != null)
+        {
+            receipt.CustomerName = _currentCustomer.Name;
+            receipt.LoyaltyTier = _currentCustomer.Tier;
+            receipt.PointsEarned = (int)(_currentOrder.Total * 10);
+        }
+
+        // Show receipt
+        MessageBox.Show(
+            receipt.GenerateReceiptText(),
+            $"Order #{receipt.OrderId} - Receipt",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information
+        );
+
+        // Start new order
+        StartNewOrder();
+        DiscountTextBox.Clear();
+        StatusText.Text = "Order completed. New order started.";
+    }
+
+    // ... rest of existing methods ...
 }

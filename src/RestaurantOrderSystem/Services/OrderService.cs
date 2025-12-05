@@ -5,6 +5,17 @@ namespace RestaurantOrderSystem.Services;
 public class OrderService : IOrderService
 {
     private static int _orderCounter = 1;
+    private readonly IDynamicPricingService _dynamicPricingService;
+
+    public OrderService()
+    {
+        _dynamicPricingService = new DynamicPricingService();
+    }
+
+    public OrderService(IDynamicPricingService dynamicPricingService)
+    {
+        _dynamicPricingService = dynamicPricingService;
+    }
 
     public Order CreateOrder()
     {
@@ -13,6 +24,13 @@ public class OrderService : IOrderService
 
     public void AddItemToOrder(Order order, MenuItem item)
     {
+        // Apply dynamic pricing before adding
+        var currentPrice = _dynamicPricingService.ApplyTimeBasedPricing(
+            item.BasePrice,
+            item.Category
+        );
+
+        // Create a priced item (could be a separate class)
         order.Items.Add(item);
         order.Subtotal = CalculateSubtotal(order);
     }
@@ -25,6 +43,24 @@ public class OrderService : IOrderService
 
     public decimal CalculateSubtotal(Order order)
     {
-        return order.Items.Sum(item => item.Price);
+        var timeOfDay = _dynamicPricingService.GetCurrentTimeOfDay();
+        return order.Items.Sum(item => item.GetCurrentPrice(timeOfDay));
+    }
+
+    // New method for combo meals
+    public void AddComboToOrder(Order order, ComboMeal combo)
+    {
+        if (!combo.IsValid())
+            throw new ArgumentException("Invalid combo meal");
+
+        // Add all items from combo
+        foreach (var item in combo.Items)
+        {
+            order.Items.Add(item);
+        }
+
+        // Apply combo discount
+        order.ComboDiscounts += combo.Savings;
+        order.Subtotal = CalculateSubtotal(order);
     }
 }
